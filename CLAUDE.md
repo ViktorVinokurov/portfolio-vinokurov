@@ -32,6 +32,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cn` импортируется из npm-пакета `cn` (новый shadcn), а не из `clsx`/`tailwind-merge`.
 - Алиас `@/` → `src/` задан в `vite.config.ts` и обоих `tsconfig`.
 
+## Деплой
+
+`.github/workflows/deploy.yml` срабатывает на пуш в `main`: `npm ci`, затем lint и build, затем rsync `dist/` по SSH на `31.31.196.54` (хостинг REG.RU, dropbear). Ключи хоста зашиты в workflow (`SSH_KNOWN_HOSTS`). Настройки репозитория: secret `SSH_PRIVATE_KEY`, variables `SSH_USER` и `DEPLOY_PATH`. rsync запускается с `--delete`, поэтому проверка `DEPLOY_PATH` в workflow обязательна, её нельзя ослаблять.
+
 ## Работа с GitHub API
 
 - Без токена лимит GitHub API — 60 запросов в час с одного IP. Токен в SPA-бандл не встраивать, потому что он попадёт в публичный JS.

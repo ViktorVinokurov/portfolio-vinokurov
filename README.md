@@ -57,7 +57,17 @@ docs/
 
 ## Деплой
 
-После `npm run build` в каталоге `dist/` лежит готовый статический сайт. Его можно разместить на любом статическом хостинге: GitHub Pages, Vercel, Netlify или nginx.
+Сайт выкладывается автоматически через GitHub Actions ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)). При каждом пуше в `main` запускаются линтер и сборка, затем каталог `dist/` копируется на хостинг `31.31.196.54` по SSH через rsync. Деплой можно запустить и вручную: Actions → Deploy → Run workflow.
+
+Настройки в Settings → Secrets and variables → Actions:
+
+| Тип | Имя | Значение |
+|---|---|---|
+| Secret | `SSH_PRIVATE_KEY` | Приватный SSH-ключ для деплоя. Его публичная часть должна быть добавлена на хостинг |
+| Variable | `SSH_USER` | Логин SSH на хостинге |
+| Variable | `DEPLOY_PATH` | Каталог сайта на сервере, например `www/example.ru` |
+
+rsync удаляет на сервере файлы, которых нет в новой сборке. Не трогает он только `.htaccess` и `.well-known/`.
 
 Запросы к GitHub API идут из браузера без токена. Лимит GitHub для таких запросов — 60 в час с одного IP, для портфолио этого достаточно.
 

@@ -1,0 +1,97 @@
+# Сборка и выкладка сайта на хостинг по SSH (rsync).
+# Настройки репозитория (Settings → Secrets and variables → Actions):
+#   secret   SSH_PRIVATE_KEY — приватный ключ, публичная часть которого добавлена на хостинг
+#   variable SSH_USER        — логин SSH на хостинге
+#   variable DEPLOY_PATH     — каталог сайта на сервере, например www/example.ru (относительно домашнего каталога)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Не запускать две выкладки одновременно; новая ждёт завершения текущей
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  SSH_HOST: 31.31.196.54
+  SSH_PORT: 22
+  # Публичные ключи сервера (ssh-keyscan 31.31.196.54). Если хостинг сменит ключи, обновить здесь
+  SSH_KNOWN_HOSTS: |
+    31.31.196.54 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGuJD5940G+MDshBOfy7//1kSTatg1zNo6XE6jnUl3IH
+    31.31.196.54 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCd1GJPo30RnDjc/XUeHpe8BBOx3Wv2Sy814iqiOj6ad4B6m7nlf9B59XRP1cdixWZK4J3ZV6b7m8BDrEs+7eQk8KSQ/NDrsn395WSbLeGrWfTsMRrUU8sIvFpBrdA7A6ZfhJmGqgLE9EZr+UovgIeDP/0234ceD7AjISU5Ne6U2qjS6yCA0+VUZm0BOoAbZwhj0f5fteHjmJc/uXF07xVTnS7Gi3nHgH2jXIW2m+eiFxYtIuoagyc7p0ZVJM/AvxfyyHZOFLDR4y/+v+hjh4hd51AWr0cRM+n4iz+ffNbazp3BIObV4AYhLdjE6Ae8HQ6syPWEKs5W9C7Srsb9Z8Id
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      # rsync --delete удаляет на сервере всё, чего нет в сборке, поэтому без корректного пути не запускаемся
+      - name: Проверить настройки
+        env:
+          SSH_USER: ${{ vars.SSH_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          [ -n "$SSH_PRIVATE_KEY" ] || { echo "::error::Не задан secret SSH_PRIVATE_KEY"; exit 1; }
+          [ -n "$SSH_USER" ] || { echo "::error::Не задана variable SSH_USER"; exit 1; }
+          case "$DEPLOY_PATH" in
+            ""|"/"|"."|"~"|"~/"|"./")
+              echo "::error::Variable DEPLOY_PATH пустая или указывает на корень/домашний каталог: '$DEPLOY_PATH'"
+              exit 1 ;;
+          esac
+          [ -f dist/index.html ] || { echo "::error::В сборке нет index.html"; exit 1; }
+
+      - name: Настроить SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Выложить на сервер
+        env:
+          SSH_USER: ${{ vars.SSH_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          # .well-known (проверка SSL-сертификата хостингом) и .htaccess на сервере не трогаем
+          rsync -rlz --delete --checksum --human-readable --stats \
+            --exclude='.well-known/' --exclude='.htaccess' \
+            -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT -o StrictHostKeyChecking=yes" \
+            dist/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+      - name: Удалить ключ
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
